@@ -1,6 +1,6 @@
 # Bookmarks tab
 
-A Chrome Extension that replaces the new tab page with a customizable grid of bookmarks.
+A Chrome Extension that replaces the new tab page with a grid of bookmarks.
 
 ## How to use
 
@@ -20,9 +20,10 @@ A Chrome Extension that replaces the new tab page with a customizable grid of bo
 ## Known issues (bugs)
 - Sometimes adding a bookmark takes a very long time. I think it has something to do with Clearbit.
 - Groups cannot be reordered via the UI.
-- The order of the groups is not preserved in exports. 
-   - Workaround: open the JSON file with a text editor and manually change the order. 
-- SVG icons/favicons are not renedered.
+- The order of the groups is not preserved in exports (alphabetial sorting is used instead). 
+   - Workaround 1: add a number in the beginning of each group’s title, reflecting the desired order.
+   - Workaround 2: open the JSON file with a text editor and manually change the order. 
+- SVG icons/favicons are not rendered.
 
 
 ## Credits
