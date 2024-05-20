@@ -1,0 +1,240 @@
+html {
+    box-sizing: border-box;
+}
+body {
+    box-sizing: border-box;
+    font-family: Inter, Arial, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+    margin: 0;
+    background: #121212;
+    color: #fff;
+}
+
+.bookmark-group {
+    width: 80%;
+    margin-bottom: 30px;
+    margin: 24px auto;
+}
+
+.group-heading {
+    font-size: 14px;
+    text-transform: capitalize;
+    color: #ffffff90;
+    margin-bottom: 8px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0 8px;
+    position: relative;
+}
+
+.group-heading .delete-link {
+    display: none;
+    margin-left: 10px;
+}
+
+.group-heading:hover .delete-link {
+    display: inline;
+}
+
+
+.group-heading .add-bookmark {
+    cursor: pointer;
+    font-size: 20px;
+    color: #ffffff80;
+    background-color: #ffffff10;
+    width: 20px;
+    height: 20px;
+    text-align: center;
+    line-height: 100%;
+    border-radius: 2px;
+}
+
+.group-heading .add-bookmark:hover {
+    color: #ffffffcc;
+    background-color: #ffffff20;
+}
+
+.delete-link {
+    margin-left: 10px;
+    color: red;
+    cursor: pointer;
+    text-decoration: none;
+}
+
+.group-heading:hover .delete-link {
+    display: inline-block;
+}
+
+#bookmarkContainer {
+    width: 100%;
+}
+
+#bookmarkGrid, .bookmarkGrid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 8px;
+    justify-content: center;
+    align-content: center;
+    width: 100%;
+}
+
+.bookmark {
+    box-sizing: border-box;
+    padding: 8px;
+    border-radius: 6px;
+    text-align: left;
+    position: relative;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.bookmark:hover {
+    background-color: #ffffff10;
+}
+
+.bookmark.dragging {
+    cursor: grabbing;
+    opacity: 0.5;
+}
+
+.bookmark img {
+    border-radius: 2px;
+    width: 32px;
+    height: 32px;
+    object-fit: cover;
+}
+
+.bookmark .title {
+    font-size: 14px;
+    display: -webkit-box;
+    -webkit-line-clamp: 1;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    word-break: break-word;
+}
+
+#addBookmark {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 48px;
+    background: #1f1f1f;
+    border-radius: 8px;
+    box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+    cursor: pointer;
+}
+
+#addBookmark div {
+    font-size: 36px;
+    color: #888;
+}
+
+#modal {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.5);
+    justify-content: center;
+    align-items: center;
+}
+
+#modalContent {
+    min-width: 50%;
+    background: #1f1f1f;
+    padding: 20px;
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    color: #fff;
+}
+
+#modalContent label {
+    font-size: 14px;
+}
+
+#modalContent input {
+    padding: 8px;
+    font-size: 14px;
+    border: 1px solid #ffffff20;
+    border-radius: 6px;
+    background: #333;
+    color: #fff;
+}
+
+#modal button {
+    border: none;
+    background-color: #ffffff10;
+    padding: 12px 20px;
+    cursor: pointer;
+    border-radius: 6px;
+}
+
+#modal button:hover {
+    opacity: 80%;
+}
+
+.save-cancel {
+    display: flex;
+    flex-direction: row;
+    justify-content: end;
+    width: 100%;
+    gap: 12px;
+    align-items: center;
+}
+
+#cancel {
+    color: #fff;
+}
+#buttons {
+    display: flex;
+    gap: 12px;
+}
+
+#save {
+    color: rgb(75, 255, 135);
+}
+
+#delete {
+    color: rgb(255, 115, 115);
+}
+
+#loadingIndicator {
+    text-align: center;
+    margin-top: 10px;
+    color: #fff;
+}
+
+#home-buttons {
+    margin-top: 20px;
+    width: 80%;
+    display: flex;
+    justify-content: center;
+    gap: 12px;
+    margin-bottom: 24px;
+}
+
+#home-buttons button, #home-buttons a {
+    font-size: 14px;
+    padding: 12px 20px;
+    background-color: transparent;
+    color: #ffffff95;
+    border: none;
+    cursor: pointer;
+    border-radius: 6px;
+    text-decoration: none;
+}
+
+#home-buttons button:hover, #home-buttons a:hover {
+    background-color: #ffffff10;
+}

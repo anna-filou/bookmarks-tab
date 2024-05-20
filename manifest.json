@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "Bookmarks Tab",
+  "version": "1.0",
+  "description": "Replaces the new tab page with a customizable grid of bookmarks.",
+  "chrome_url_overrides": {
+    "newtab": "newtab.html"
+  },
+  "permissions": ["storage"],
+  "icons": {
+    "16": "icon-16.png",
+    "32": "icon-32.png",
+    "128": "icon-128.png"
+  }
+}

@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bookmarks</title>
+  <link rel="icon" type="image/x-icon" href="icon-128.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="bookmarkContainer"></div>
+  <div id="home-buttons">
+    <a href="https://github.com/anna-filou/bookmarks-tab/blob/main/README.md">How to Use</a>
+    <button id="deleteAll">Delete All</button>
+    <button id="exportBookmarks">Export Bookmarks</button>
+    <button id="importBookmarks">Import Bookmarks</button>
+    <input type="file" id="importFile" style="display: none;">
+    <button id="addGroup">Add Group</button>
+  </div>
+  <div id="modal">
+    <div id="modalContent">
+      <label for="url">URL</label>
+      <input type="text" id="url">
+      <label for="title">Title</label>
+      <input type="text" id="title">
+      <label for="icon">Icon URL</label>
+      <input type="text" id="icon">
+      <div id="buttons">
+        <button id="delete" style="display:none;">Delete</button>
+        <div class="save-cancel">
+          <button id="cancel">Cancel</button>
+          <button id="save">Save</button>
+          <div id="loadingIndicator" style="display: none;">Saving...</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script src="Sortable.min.js"></script>
+  <script src="newtab.js"></script>
+</body>
+</html>
