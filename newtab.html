@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Bookmarks</title>
+  <title>Gridmarks</title>
   <link rel="icon" type="image/x-icon" href="icon-128.png">
   <link rel="stylesheet" href="styles.css">
 </head>
@@ -24,7 +24,12 @@
       <label for="title">Title</label>
       <input type="text" id="title">
       <label for="icon">Icon URL</label>
-      <input type="text" id="icon">
+      <div class="icon-input-row">
+        <input type="text" id="icon">
+        <button id="refreshMetadata" title="Refresh title and icon" style="display: none;">↺</button>
+        <button id="toggleIconBg" title="Toggle white background" style="display: none;">BG</button>
+        <img id="iconPreview" alt="Icon preview" style="display:none;" />
+      </div>
       <div id="buttons">
         <button id="delete" style="display:none;">Delete</button>
         <div class="save-cancel">

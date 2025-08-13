@@ -19,6 +19,16 @@ body {
     margin: 24px auto;
 }
 
+.bookmark-group.collapsed .bookmarkGrid {
+    display: none;
+}
+
+.bookmark-group.collapsed .group-title-text::after {
+    content: ' (collapsed)';
+    color: #ffffff50;
+    font-weight: normal;
+}
+
 .group-heading {
     font-size: 14px;
     text-transform: capitalize;
@@ -31,13 +41,26 @@ body {
     position: relative;
 }
 
-.group-heading .delete-link {
+.group-heading .delete-link, .group-heading .rename-link {
     display: none;
     margin-left: 10px;
+    opacity: 0.6;
+    transition: opacity 120ms ease;
 }
 
-.group-heading:hover .delete-link {
+.group-heading:hover .delete-link, .group-heading:hover .rename-link {
     display: inline;
+}
+
+.group-heading .delete-link:hover, .group-heading .rename-link:hover {
+    opacity: 1;
+}
+
+.rename-link {
+    margin-left: 10px;
+    color: #b1b1b1;
+    cursor: pointer;
+    text-decoration: none;
 }
 
 
@@ -60,7 +83,7 @@ body {
 
 .delete-link {
     margin-left: 10px;
-    color: red;
+    color: rgb(255, 167, 167);
     cursor: pointer;
     text-decoration: none;
 }
@@ -71,6 +94,47 @@ body {
 
 #bookmarkContainer {
     width: 100%;
+}
+
+/* Group title layout and controls */
+.group-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    position: relative; /* allow absolute-positioned handle */
+}
+
+.group-title .group-title-text {
+    flex: 0 1 auto;
+}
+
+.group-toggle {
+    position: absolute;
+    left: -20px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 16px;
+    height: 16px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: #ffffff60;
+    user-select: none;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 120ms ease;
+}
+
+.group-heading:hover .group-toggle {
+    opacity: 1;
+}
+
+.group-title-text {
+    cursor: grab; /* title is the drag handle for reordering groups */
+}
+
+.group-title-text.dragging {
+    cursor: grabbing;
 }
 
 #bookmarkGrid, .bookmarkGrid {
@@ -98,6 +162,35 @@ body {
     background-color: #ffffff10;
 }
 
+.bookmark .bookmark-actions {
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    display: none;
+}
+
+.bookmark:hover .bookmark-actions {
+    display: block;
+}
+
+.bookmark .bookmark-actions .edit-bookmark {
+    border: none;
+    background: #ffffff10;
+    color: #ffffffc0;
+    border-radius: 4px;
+    width: 28px;
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+}
+
+.bookmark .bookmark-actions .edit-bookmark:hover {
+    background: #ffffff20;
+}
+
 .bookmark.dragging {
     cursor: grabbing;
     opacity: 0.5;
@@ -110,10 +203,15 @@ body {
     object-fit: cover;
 }
 
+.bookmark img.white-bg {
+    background: #ffffff;
+}
+
 .bookmark .title {
     font-size: 14px;
     display: -webkit-box;
     -webkit-line-clamp: 1;
+    line-clamp: 1;
     -webkit-box-orient: vertical;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -149,7 +247,8 @@ body {
 }
 
 #modalContent {
-    min-width: 50%;
+    width: 100%;
+    max-width: 400px;
     background: #1f1f1f;
     padding: 20px;
     border-radius: 8px;
@@ -172,6 +271,54 @@ body {
     color: #fff;
 }
 
+.icon-input-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.icon-input-row #icon {
+    flex: 1 1 auto;
+}
+
+.icon-input-row #refreshMetadata {
+    border: none;
+    background-color: #ffffff10;
+    color: #fff;
+    padding: 8px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+.icon-input-row #refreshMetadata:hover {
+    background-color: #ffffff20;
+}
+
+.icon-input-row #toggleIconBg {
+    border: none;
+    background-color: #ffffff10;
+    color: #fff;
+    padding: 8px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+.icon-input-row #toggleIconBg:hover {
+    background-color: #ffffff20;
+}
+
+.icon-input-row #iconPreview {
+    width: 24px;
+    height: 24px;
+    border-radius: 4px;
+    object-fit: cover;
+    background: #2a2a2a;
+}
+
+.icon-input-row #iconPreview.white-bg {
+    background: #ffffff;
+}
+
 #modal button {
     border: none;
     background-color: #ffffff10;
@@ -182,6 +329,28 @@ body {
 
 #modal button:hover {
     opacity: 80%;
+}
+
+/* Spinner used inside buttons (no layout shift) */
+.btn-spinner-content {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+}
+
+.spinner {
+    width: 14px;
+    height: 14px;
+    border: 2px solid rgba(255, 255, 255, 0.25);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
 }
 
 .save-cancel {
@@ -205,6 +374,11 @@ body {
     color: rgb(75, 255, 135);
 }
 
+/* Make the default Save button slightly wider to match loading state */
+#save {
+    min-width: 92px; /* wide enough for 'Saving…' + spinner */
+}
+
 #delete {
     color: rgb(255, 115, 115);
 }
@@ -220,6 +394,7 @@ body {
     width: 80%;
     display: flex;
     justify-content: center;
+    flex-wrap: wrap;
     gap: 12px;
     margin-bottom: 24px;
 }
@@ -237,4 +412,14 @@ body {
 
 #home-buttons button:hover, #home-buttons a:hover {
     background-color: #ffffff10;
+}
+
+/* Responsive tweaks */
+@media (max-width: 640px) {
+    .bookmark-group {
+        width: 100%;
+        padding: 20px;
+        box-sizing: border-box;
+        margin: 0 auto 30px auto;
+    }
 }

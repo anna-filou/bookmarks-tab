@@ -1,12 +1,32 @@
 {
   "manifest_version": 3,
-  "name": "Bookmarks Tab",
-  "version": "1.0",
-  "description": "Replaces the new tab page with a customizable grid of bookmarks.",
-  "chrome_url_overrides": {
+  "name": "Gridmarks: New Tab Bookmarks",
+  "version": "2.2",
+  "description": "Replaces your new tab with a fast, customizable grid of grouped bookmarks. Auto‑fetch icons, drag to reorder, and import/export.",
+  "chrome_url_overrides": { 
     "newtab": "newtab.html"
   },
-  "permissions": ["storage"],
+  "action": {
+    "default_title": "Open Gridmarks",
+    "default_icon": {
+      "16": "icon-16.png",
+      "32": "icon-32.png",
+      "128": "icon-128.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "commands": {
+    "open-gridmarks": {
+      "suggested_key": {
+        "default": "Alt+T",
+        "mac": "Alt+T"
+      },
+      "description": "Open Gridmarks"
+    }
+  },
+  "permissions": ["storage", "contextMenus"],
   "icons": {
     "16": "icon-16.png",
     "32": "icon-32.png",
