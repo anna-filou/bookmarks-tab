@@ -28,10 +28,9 @@ You can also launch it by clicking the extension’s icon or pressing `Alt+T`, w
 ## Known issues (bugs)
 - None
 
-
 ## Credits
-The JS was written by ChatGPT 4o and only slightly tweaked by me. 
-I did the styling / wrote the CSS.
+The JS was mostly written by ChatGPT.
+I did the concept, UX, styling and wrote most of the CSS.
 
 ### Third-party resources used
 
