@@ -38,4 +38,3 @@ I did the styling / wrote the CSS.
 - [Sortable.JS](https://github.com/SortableJS/Sortable) (MIT License)
 - [AllOrigins](https://allorigins.win) CORS proxy for metadata fetching
 - Google S2 Favicon service for fallback favicons
-- [Remix Icon](https://remixicon.com/) for logo (Apache License)
