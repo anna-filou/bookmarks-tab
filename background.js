@@ -40,3 +40,20 @@ chrome.contextMenus.onClicked.addListener(async (info) => {
   }
 });
 
+// Optional: expose a message-based title fetcher that the UI could call later
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message && message.type === 'FETCH_PAGE_TITLE') {
+    const { url } = message;
+    // Just try to fetch raw HTML and extract <title> quickly (no CORS in service worker)
+    fetch(url, { redirect: 'follow' })
+      .then((res) => res.text())
+      .then((html) => {
+        const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+        const title = titleMatch ? titleMatch[1].trim() : '';
+        sendResponse({ ok: true, title });
+      })
+      .catch((err) => sendResponse({ ok: false, error: String(err) }));
+    return true; // async
+  }
+});
+

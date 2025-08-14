@@ -3,6 +3,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const bookmarkContainer = document.getElementById('bookmarkContainer');
     const modal = document.getElementById('modal');
+    const modalContentEl = document.getElementById('modalContent');
     const urlInput = document.getElementById('url');
     const titleInput = document.getElementById('title');
     const iconInput = document.getElementById('icon');
@@ -20,6 +21,42 @@ document.addEventListener('DOMContentLoaded', () => {
     let collapsedGroups = new Set();
     let lastGroupDragAt = 0;
     let modalSessionId = 0;
+    // Track fastest proxy per host to order future races
+    const fastestProxyByHost = new Map();
+
+    // Modal saving overlay helpers
+    function showModalSavingState() {
+        if (!modalContentEl) return;
+        // If already shown, do nothing
+        if (modalContentEl.querySelector('.modal-saving')) return;
+        // Hide existing children
+        Array.from(modalContentEl.children).forEach(child => {
+            if (child.classList && child.classList.contains('modal-saving')) return;
+            child.dataset._prevDisplay = child.style.display || '';
+            child.setAttribute('data-hidden-for-saving', '1');
+            child.style.display = 'none';
+        });
+        // Add saving view
+        const saving = document.createElement('div');
+        saving.className = 'modal-saving';
+        saving.innerHTML = '<span class="spinner"></span><span>Saving…</span>';
+        modalContentEl.appendChild(saving);
+    }
+
+    function restoreModalContent() {
+        if (!modalContentEl) return;
+        // Remove saving view if present
+        const saving = modalContentEl.querySelector('.modal-saving');
+        if (saving) saving.remove();
+        // Unhide original children
+        Array.from(modalContentEl.children).forEach(child => {
+            if (child.hasAttribute('data-hidden-for-saving')) {
+                child.style.display = child.dataset._prevDisplay || '';
+                delete child.dataset._prevDisplay;
+                child.removeAttribute('data-hidden-for-saving');
+            }
+        });
+    }
 
     // Load bookmarks from storage
     function loadBookmarks() {
@@ -189,6 +226,12 @@ document.addEventListener('DOMContentLoaded', () => {
     // Render bookmarks to the specific group grid
     function renderBookmarks(groupName) {
         const bookmarkGrid = document.getElementById(`grid-${groupName}`);
+        if (!bookmarkGrid) {
+            console.warn('renderBookmarks: grid element not found for group', groupName);
+            // Recover by fully re-rendering groups once
+            renderBookmarkGroups();
+            return;
+        }
         bookmarkGrid.innerHTML = '';
         bookmarks[groupName].forEach((bookmark, index) => {
             const bookmarkElement = createBookmarkElement(groupName, bookmark, index);
@@ -533,8 +576,189 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Fetch title and best available site icon (prefers large apple-touch/manifest icons; falls back to favicon services)
-    async function fetchMetadata(url) {
+    async function fetchMetadata(url, externalSignal) {
+        // Timing + logging helpers
+        const t0 = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+        const elapsedMs = () => Math.round(((typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now()) - t0);
+        const ts = () => `+${elapsedMs()}ms @ ${new Date().toISOString()}`;
+        const logI = (label, data) => console.log(`fetchMetadata ${ts()} ${label}`, data);
+        const logW = (label, data) => console.warn(`fetchMetadata ${ts()} ${label}`, data);
+        const logE = (label, data) => console.error(`fetchMetadata ${ts()} ${label}`, data);
         // Helpers
+        const fetchWithTimeout = async (resource, { responseType = 'text', externalSignal } = {}) => {
+            const controller = new AbortController();
+            const onExternalAbort = () => controller.abort();
+            if (externalSignal) {
+                if (externalSignal.aborted) controller.abort();
+                else externalSignal.addEventListener('abort', onExternalAbort, { once: true });
+            }
+            try {
+                const res = await fetch(resource, { signal: controller.signal });
+                if (!res.ok) {
+                    const body = await res.text().catch(() => '');
+                    logW('non-OK response', { resource, status: res.status, bodySnippet: body.slice(0, 200) });
+                    throw new Error(`HTTP ${res.status}`);
+                }
+                if (responseType === 'json') return await res.json();
+                return await res.text();
+            } finally {
+                if (externalSignal) externalSignal.removeEventListener('abort', onExternalAbort);
+            }
+        };
+        const raceHtmlViaProxiesAny = async (targetUrl, externalSignal) => {
+            const host = (() => { try { return new URL(targetUrl).hostname; } catch { return ''; } })();
+            const proxies = [
+                { key: 'jina', url: withNoCache(`https://r.jina.ai/${targetUrl}`) },
+                { key: 'ao',   url: withNoCache(`https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`) }
+            ];
+            // Reorder based on fastest proxy observed for this host
+            const prefKey = fastestProxyByHost.get(host);
+            const ordered = prefKey ? [
+                ...proxies.filter(p => p.key === prefKey),
+                ...proxies.filter(p => p.key !== prefKey)
+            ] : proxies;
+            const endpointControllers = ordered.map(() => new AbortController());
+            // Propagate outer abort to all endpoints
+            const outerAbortHandlers = [];
+            if (externalSignal) {
+                const forwardAbort = () => endpointControllers.forEach(c => c.abort());
+                externalSignal.addEventListener('abort', forwardAbort);
+                outerAbortHandlers.push({ forwardAbort });
+            }
+            let settled = false;
+            const attempts = ordered.map((p, idx) => {
+                logI('trying proxy', { endpoint: p.url });
+                return fetchWithTimeout(p.url, { responseType: 'text', externalSignal: endpointControllers[idx].signal })
+                    .then(html => {
+                        logI('proxy success', { endpoint: p.url, length: html.length });
+                        return { html, endpoint: p.url, idx, key: p.key };
+                    })
+                    .catch(err => {
+                        logW('proxy failed', { endpoint: p.url, error: String(err) });
+                        throw err;
+                    });
+            });
+            try {
+                const winner = await Promise.any(attempts);
+                if (!settled) {
+                    settled = true;
+                    // Abort losers except keep AllOrigins running if Jina won (we may need raw HTML for icons)
+                    endpointControllers.forEach((c, i) => {
+                        const isWinner = i === winner.idx;
+                        const loserKey = ordered[i]?.key;
+                        const keepRunning = (winner.key === 'jina' && loserKey === 'ao');
+                        if (!isWinner && !keepRunning) {
+                            try { c.abort(); } catch {}
+                        }
+                    });
+                }
+                // Save fastest proxy key for host
+                if (host && winner.key) fastestProxyByHost.set(host, winner.key);
+                // Also return a pending AllOrigins promise if Jina won
+                let pendingAllOriginsPromise = null;
+                if (winner.key === 'jina') {
+                    const aoIdx = ordered.findIndex(p => p.key === 'ao');
+                    if (aoIdx !== -1) {
+                        pendingAllOriginsPromise = attempts[aoIdx].catch(() => null);
+                    }
+                }
+                return { html: winner.html, endpoint: winner.endpoint, pendingAllOriginsPromise };
+            } catch (aggregate) {
+                throw new Error('All proxy attempts failed');
+            } finally {
+                // Cleanup outer abort listeners
+                if (externalSignal && outerAbortHandlers.length) {
+                    try { externalSignal.removeEventListener('abort', outerAbortHandlers[0].forwardAbort); } catch {}
+                }
+            }
+        };
+
+        // Fetch only the <head> of the raw HTML via AllOrigins and stop reading as soon as </head> is seen (no timeouts)
+        const fetchHeadHtmlViaAllOrigins = async (targetUrl, externalSignal) => {
+            const endpoint = `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`; // allow proxy cache
+            logI('head fetch: starting', { endpoint });
+            const controller = new AbortController();
+            const onExternalAbort = () => controller.abort();
+            if (externalSignal) {
+                if (externalSignal.aborted) controller.abort();
+                else externalSignal.addEventListener('abort', onExternalAbort, { once: true });
+            }
+            try {
+                const res = await fetch(endpoint, { signal: controller.signal });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                if (!res.body || !res.body.getReader) {
+                    const full = await res.text();
+                    logI('head fetch: no stream, using full text', { length: full.length });
+                    return full;
+                }
+                const reader = res.body.getReader();
+                const decoder = new TextDecoder('utf-8');
+                let done = false;
+                let buffer = '';
+                let bytes = 0;
+                const MAX_BYTES = 512 * 1024; // 512KB cap to avoid huge reads
+                while (!done) {
+                    const { value, done: rdDone } = await reader.read();
+                    done = rdDone;
+                    if (value && value.length) {
+                        bytes += value.length;
+                        buffer += decoder.decode(value, { stream: true });
+                        const lower = buffer.toLowerCase();
+                        const idx = lower.indexOf('</head>');
+                        if (idx !== -1) {
+                            const headHtml = buffer.slice(0, idx + 7);
+                            try { controller.abort(); } catch {}
+                            logI('head fetch: captured head', { bytesRead: bytes, length: headHtml.length });
+                            return headHtml;
+                        }
+                        if (bytes >= MAX_BYTES) {
+                            try { controller.abort(); } catch {}
+                            logW('head fetch: max bytes reached, returning partial', { bytesRead: bytes, length: buffer.length });
+                            return buffer;
+                        }
+                    }
+                }
+                logI('head fetch: stream ended without </head>', { bytesRead: bytes, length: buffer.length });
+                return buffer;
+            } finally {
+                if (externalSignal) externalSignal.removeEventListener('abort', onExternalAbort);
+            }
+        };
+        const withNoCache = (u) => `${u}${u.includes('?') ? '&' : '?'}nocache=${Date.now()}`;
+        const prettyTitleFromHostname = (hostname) => {
+            try {
+                const parts = (hostname || '').split('.').filter(Boolean);
+                if (parts.length === 0) return hostname || '';
+                const tld = parts[parts.length - 1].toLowerCase();
+                const sld = parts.length >= 2 ? parts[parts.length - 2] : parts[0];
+                const capitalize = (s) => s ? s.replace(/[-_]+/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : '';
+                const tldUpperSet = new Set(['ai','io','tv','fm','so','app','dev']);
+                const sldPretty = capitalize(sld);
+                if (tldUpperSet.has(tld)) return `${sldPretty} ${tld.toUpperCase()}`.trim();
+                // Default: just SLD
+                return sldPretty;
+            } catch { return hostname || ''; }
+        };
+        const extractTitle = (doc, pageUrl, rawText, usedEndpoint) => {
+            const titleTag = doc.querySelector('title');
+            const og = doc.querySelector('meta[property="og:title"]');
+            const tw = doc.querySelector('meta[name="twitter:title"]');
+            let rawTitle = (titleTag && titleTag.textContent) ? titleTag.textContent.trim() : '';
+            // If using r.jina.ai (readable text, not HTML), try to extract a Title: ... line
+            if (!rawTitle && usedEndpoint && usedEndpoint.includes('r.jina.ai') && typeof rawText === 'string') {
+                const m = rawText.match(/(?:^|\n)\s*Title:\s*([^\n]+)/i);
+                if (m && m[1]) {
+                    rawTitle = m[1].trim();
+                    logI('extracted title from readable text', { rawTitle });
+                }
+            }
+            const ogTitle = og && og.getAttribute('content') ? og.getAttribute('content').trim() : '';
+            const twTitle = tw && tw.getAttribute('content') ? tw.getAttribute('content').trim() : '';
+            logI('title candidates', { rawTitle, ogTitle, twTitle });
+            const finalTitle = rawTitle || ogTitle || twTitle || prettyTitleFromHostname(pageUrl.hostname);
+            return finalTitle;
+        };
+        logI('start', { inputUrl: url });
         const toAbsoluteUrl = (baseUrl, href) => {
             try { return new URL(href, baseUrl).href; } catch { return null; }
         };
@@ -549,24 +773,55 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             return max;
         };
+        const computeRelScore = (rel) => {
+            if (!rel) return 0;
+            // Normalize rel tokens
+            const tokens = rel.toLowerCase().split(/\s+/).filter(Boolean);
+            const hasIcon = tokens.includes('icon');
+            const hasShortcut = tokens.includes('shortcut');
+            const isApple = tokens.includes('apple-touch-icon') || tokens.includes('apple-touch-icon-precomposed');
+            const isMask = tokens.includes('mask-icon');
+            if (hasIcon && hasShortcut) return 100; // Prefer classic shortcut icon when present
+            if (hasIcon) return 80;                 // Generic icon links
+            if (isApple) return 60;                 // Apple touch icons
+            if (isMask) return 40;                  // Safari mask icon
+            return 10;
+        };
+        const computeFileTypeScore = (urlOrType) => {
+            const u = (urlOrType || '').toLowerCase();
+            if (u.includes('image/svg') || u.endsWith('.svg')) return 40;
+            if (u.includes('image/png') || u.endsWith('.png')) return 20;
+            if (u.includes('image/x-icon') || u.endsWith('.ico') || u.endsWith('.ico?v=')) return 10;
+            return 0;
+        };
         const addCandidate = (arr, href, size, baseUrl) => {
             const abs = toAbsoluteUrl(baseUrl, href);
-            if (abs) arr.push({ url: abs, size: size || 0 });
+            if (abs) arr.push({ url: abs, size: size || 0, score: 0 });
+        };
+        const addCandidateWithMeta = (arr, href, size, baseUrl, rel, type) => {
+            const abs = toAbsoluteUrl(baseUrl, href);
+            if (abs) arr.push({ url: abs, size: size || 0, score: computeRelScore(rel || '') + computeFileTypeScore(type || abs) });
         };
 
         try {
             // Normalize URL
             const normalized = url.startsWith('http') ? url : 'https://' + url;
             const pageUrl = new URL(normalized);
+            logI('normalized URL', { normalized, pageHref: pageUrl.href, hostname: pageUrl.hostname });
 
             // Fetch page HTML via CORS proxy
-            const response = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(pageUrl.href)}`);
-            const text = await response.text();
+            if (externalSignal && externalSignal.aborted) {
+                logI('aborted before fetching page');
+                throw new DOMException('Aborted', 'AbortError');
+            }
+            logI('fetching page (with fallbacks)');
+            const { html: text, endpoint: usedEndpoint, pendingAllOriginsPromise } = await raceHtmlViaProxiesAny(pageUrl.href, externalSignal);
+            logI('page fetched', { usedEndpoint, length: text.length, snippet: text.slice(0, 200) });
             const doc = new DOMParser().parseFromString(text, 'text/html');
 
             // Title
-            const titleTag = doc.querySelector('title');
-            const title = titleTag ? titleTag.textContent : pageUrl.hostname;
+            const title = extractTitle(doc, pageUrl, text, usedEndpoint);
+            logI('final title decided', { title });
 
             // Collect icon candidates
             const iconCandidates = [];
@@ -577,8 +832,24 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (manifestLink && manifestLink.getAttribute('href')) {
                     const manifestHref = toAbsoluteUrl(pageUrl.href, manifestLink.getAttribute('href'));
                     if (manifestHref) {
-                        const manRes = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(manifestHref)}`);
-                        const manifestJson = await manRes.json();
+                        if (externalSignal && externalSignal.aborted) {
+                            logI('aborted before fetching manifest');
+                            throw new DOMException('Aborted', 'AbortError');
+                        }
+                        logI('fetching manifest (with fallbacks)', { manifestHref });
+                        let manifestJson = null;
+                        try {
+                            const { html: manifestText, endpoint: manifestEndpoint } = await raceHtmlViaProxiesAny(manifestHref, externalSignal);
+                            logI('manifest fetched', { manifestEndpoint, length: manifestText.length });
+                            manifestJson = JSON.parse(manifestText);
+                        } catch (e) {
+                            logW('manifest fetch/parse failed', { error: String(e) });
+                            manifestJson = null;
+                        }
+                        if (!manifestJson) {
+                            throw new Error('Manifest not available');
+                        }
+                        logI('manifest parsed', { hasIcons: Array.isArray(manifestJson.icons), iconsCount: Array.isArray(manifestJson.icons) ? manifestJson.icons.length : 0 });
                         const icons = Array.isArray(manifestJson.icons) ? manifestJson.icons : [];
                         for (const icon of icons) {
                             const size = parseSize(icon.sizes) || 0;
@@ -587,7 +858,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     }
                 }
             } catch (e) {
-                // ignore manifest fetch/parse errors
+            logW('manifest fetch failed', e);
             }
 
             // 2) Apple touch icons and other link rel icons (prefer large sizes)
@@ -598,37 +869,89 @@ document.addEventListener('DOMContentLoaded', () => {
                 'link[rel~="shortcut icon"]',
                 'link[rel~="mask-icon"]'
             ];
-            doc.querySelectorAll(linkSelectors.join(',')).forEach(link => {
+            const linkNodes = doc.querySelectorAll(linkSelectors.join(','));
+            logI('link rel icons found', { count: linkNodes.length });
+            linkNodes.forEach(link => {
                 const href = link.getAttribute('href');
                 if (!href) return;
                 const sizesAttr = link.getAttribute('sizes');
                 const size = parseSize(sizesAttr) || 0;
-                addCandidate(iconCandidates, href, size, pageUrl.href);
+                const rel = link.getAttribute('rel') || '';
+                const type = link.getAttribute('type') || '';
+                addCandidateWithMeta(iconCandidates, href, size, pageUrl.href, rel, type);
             });
+            logI('icon candidates after links', { count: iconCandidates.length });
 
-            // 3) If no candidates yet, try conventional /favicon.ico
-            if (iconCandidates.length === 0) {
-                addCandidate(iconCandidates, '/favicon.ico', 32, pageUrl.origin + '/');
+            // If readability proxy was used and found no icons, fetch just the <head> via raw HTML proxy and parse rel icons
+            if (iconCandidates.length === 0 && usedEndpoint && usedEndpoint.includes('r.jina.ai')) {
+                try {
+                    logI('no rel icons via readability; fetching <head> only for rel icons');
+                    const headHtml = await fetchHeadHtmlViaAllOrigins(pageUrl.href, externalSignal);
+                    const headDoc = new DOMParser().parseFromString(headHtml, 'text/html');
+                    const linkNodesH = headDoc.querySelectorAll(linkSelectors.join(','));
+                    logI('head-only link rel icons found', { count: linkNodesH.length });
+                    linkNodesH.forEach(link => {
+                        const href = link.getAttribute('href');
+                        if (!href) return;
+                        const sizesAttr = link.getAttribute('sizes');
+                        const size = parseSize(sizesAttr) || 0;
+                        const rel = link.getAttribute('rel') || '';
+                        const type = link.getAttribute('type') || '';
+                        addCandidateWithMeta(iconCandidates, href, size, pageUrl.href, rel, type);
+                    });
+                    logI('icon candidates after head-only fetch', { count: iconCandidates.length });
+                } catch (e) {
+                    logW('head-only icon fetch failed', { error: String(e) });
+                    // Fall back to conventional if still empty
+                    if (iconCandidates.length === 0) {
+                        addCandidate(iconCandidates, '/favicon.ico', 32, pageUrl.origin + '/');
+                        addCandidate(iconCandidates, '/favicon.png', 32, pageUrl.origin + '/');
+                        addCandidate(iconCandidates, '/favicon.jpg', 32, pageUrl.origin + '/');
+                        addCandidate(iconCandidates, '/favicon.jpeg', 32, pageUrl.origin + '/');
+                        addCandidate(iconCandidates, '/favicon.svg', 32, pageUrl.origin + '/');
+                    }
+                }
             }
 
-            // Choose the largest candidate
-            iconCandidates.sort((a, b) => b.size - a.size);
+            // 3) If no candidates yet, try conventional favicon filenames
+            if (iconCandidates.length === 0) {
+                logI('adding conventional favicon fallbacks');
+                addCandidate(iconCandidates, '/favicon.ico', 32, pageUrl.origin + '/');
+                addCandidate(iconCandidates, '/favicon.png', 32, pageUrl.origin + '/');
+                addCandidate(iconCandidates, '/favicon.jpg', 32, pageUrl.origin + '/');
+                addCandidate(iconCandidates, '/favicon.jpeg', 32, pageUrl.origin + '/');
+                addCandidate(iconCandidates, '/favicon.svg', 32, pageUrl.origin + '/');
+            }
+
+            // Choose by score (rel preference), then by size
+            iconCandidates.sort((a, b) => {
+                const s = (b.score || 0) - (a.score || 0);
+                return s !== 0 ? s : (b.size - a.size);
+            });
             let icon = iconCandidates.length > 0 ? iconCandidates[0].url : '';
+            logI('chosen icon', { icon, totalCandidates: iconCandidates.length });
 
             // Fallback to Google's S2 favicon service with size hint
             if (!icon) {
                 icon = `https://www.google.com/s2/favicons?domain=${pageUrl.hostname}&sz=128`;
+                logI('using Google S2 fallback icon', { icon });
             }
 
+            logI('done', { title, icon });
             return { title, icon };
         } catch (error) {
-            console.error('Error fetching metadata:', error);
+            logE('error', error);
             try {
                 const normalized = url.startsWith('http') ? url : 'https://' + url;
                 const parsed = new URL(normalized);
-                return { title: parsed.hostname, icon: `https://www.google.com/s2/favicons?domain=${parsed.hostname}&sz=128` };
+                const fallbackTitle = prettyTitleFromHostname(parsed.hostname);
+                const fallback = { title: fallbackTitle, icon: `https://www.google.com/s2/favicons?domain=${parsed.hostname}&sz=128` };
+                logI('returning fallback', fallback);
+                return fallback;
             } catch {
-                return { title: url, icon: '' };
+                const fallback = { title: url, icon: '' };
+                logI('returning basic fallback', fallback);
+                return fallback;
             }
         }
     }
@@ -669,6 +992,35 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     let isCancelled = false;
+
+    // Background metadata refresh that does not block Save
+    async function backgroundRefreshBookmarkMetadata(groupName, index, url, hadMissingTitle, hadMissingIcon) {
+        try {
+            const result = await fetchMetadata(url);
+            if (!result) return;
+            const group = bookmarks[groupName];
+            if (!group || !group[index]) return;
+            let updated = false;
+            if (hadMissingTitle && result.title && result.title.trim()) {
+                const newTitle = result.title.trim();
+                if (group[index].title !== newTitle) {
+                    console.log('backgroundRefresh: updating title', { from: group[index].title, to: newTitle });
+                    group[index].title = newTitle;
+                    updated = true;
+                }
+            }
+            if (hadMissingIcon && result.icon && result.icon.trim()) {
+                group[index].icon = result.icon.trim();
+                updated = true;
+            }
+            if (updated) {
+                saveBookmarks();
+                try { renderBookmarks(groupName); } catch { renderBookmarkGroups(); }
+            }
+        } catch (e) {
+            console.warn('backgroundRefreshBookmarkMetadata failed', e);
+        }
+    }
 
     // Render utility: replace button content with spinner + text, preserving size
     function setButtonLoading(button, isLoading, textWhenLoading) {
@@ -715,33 +1067,73 @@ document.addEventListener('DOMContentLoaded', () => {
         return;
     }
 
-    // Disable the save button and show loading spinner
+    // Switch modal to saving state
+    showModalSavingState();
+    // Disable save to prevent double submit (kept for safety)
     setButtonLoading(saveButton, true, 'Saving…');
-    console.log("Save button disabled and loading spinner shown");
+    console.log("Modal switched to saving state");
 
-    if (!title || !icon) {
-        const metadata = await fetchMetadata(url);
-    if (isCancelled) {
-            console.log("Save operation cancelled during metadata fetch");
-            resetModal();
+    try {
+        // Track whether user left fields blank at the start
+        const missingTitleBefore = !title || !title.trim();
+        const missingIconBefore = !icon || !icon.trim();
+        if (missingTitleBefore || missingIconBefore) {
+            console.log('saveNewBookmark: need metadata', { missingTitle: missingTitleBefore, missingIcon: missingIconBefore, currentTitle: title, currentIcon: icon });
+            const controller = new AbortController();
+            const metadata = await fetchMetadata(url, controller.signal);
+            if (isCancelled) {
+                console.log("saveNewBookmark: cancelled during metadata fetch");
+                controller.abort();
+                return;
+            }
+            // Graceful fallback if metadata is slow/empty
+            const receivedTitle = (metadata.title || '').trim();
+            const receivedIcon = (metadata.icon || '').trim();
+            const finalTitle = (title || receivedTitle).trim() || new URL(url).hostname;
+            const finalIcon = (icon || receivedIcon).trim();
+            console.log('saveNewBookmark: after metadata fetch', { receivedTitle, receivedIcon, finalTitle, finalIcon });
+            title = finalTitle;
+            icon = finalIcon;
+            // Compute if we used fallback values (so we can refresh in background)
+            var usedFallbackTitle = missingTitleBefore && !receivedTitle;
+            var usedFallbackIcon = missingIconBefore && !receivedIcon;
+        } else {
+            var usedFallbackTitle = false;
+            var usedFallbackIcon = false;
+        }
+
+        if (isCancelled) {
+            console.log("saveNewBookmark: cancelled before persisting");
             return;
         }
-        title = title || metadata.title;
-        icon = icon || metadata.icon;
-    }
 
-    if (isCancelled) {
-        console.log("Save operation cancelled before pushing bookmark");
+        // Persist and render
+        const hadMissingTitle = usedFallbackTitle;
+        const hadMissingIcon = usedFallbackIcon;
+        bookmarks[groupName].push({ url, title, icon: icon || faviconServiceUrlForDomain(getDomainFromUrl(url), 128), whiteBg: false });
+        console.log('saveNewBookmark: persisting bookmark');
+        saveBookmarks();
+        try {
+            renderBookmarks(groupName);
+        } catch (e) {
+            console.error('Failed to render bookmarks after save; re-rendering groups', e);
+            renderBookmarkGroups();
+        }
+        const newIndex = bookmarks[groupName].length - 1;
+        console.log('saveNewBookmark: saved', { groupName, index: newIndex, titleUsed: title, iconUsed: icon || faviconServiceUrlForDomain(getDomainFromUrl(url), 128) });
+        // Kick a background metadata refresh to fill title/icon if needed
+        if (hadMissingTitle || hadMissingIcon) {
+            backgroundRefreshBookmarkMetadata(groupName, newIndex, url, hadMissingTitle, hadMissingIcon);
+        }
+        console.log("New bookmark saved successfully");
+    } finally {
+        // Always restore UI state
+        console.log('saveNewBookmark: closing modal and restoring content');
         resetModal();
-        return;
+        closeModal();
+        // In case modal stayed open for any reason, restore original content
+        restoreModalContent();
     }
-
-    bookmarks[groupName].push({ url, title, icon, whiteBg: false });
-    saveBookmarks();
-    renderBookmarks(groupName);
-    resetModal();
-    closeModal();
-    console.log("New bookmark saved successfully");
     }
 
     // Save an edited bookmark
@@ -762,33 +1154,65 @@ document.addEventListener('DOMContentLoaded', () => {
         return;
     }
 
-    // Disable the save button and show loading spinner
+    // Switch modal to saving state
+    showModalSavingState();
     setButtonLoading(saveButton, true, 'Saving…');
-    console.log("Save button disabled and loading spinner shown");
+    console.log("Modal switched to saving state");
 
-    if (!title || !icon) {
-        const metadata = await fetchMetadata(url);
-    if (isCancelled) {
-            console.log("Save operation cancelled during metadata fetch");
-            resetModal();
+    try {
+        const missingTitleBefore = !title || !title.trim();
+        const missingIconBefore = !icon || !icon.trim();
+        if (missingTitleBefore || missingIconBefore) {
+            console.log('saveEditedBookmark: need metadata', { missingTitle: missingTitleBefore, missingIcon: missingIconBefore, currentTitle: title, currentIcon: icon });
+            const controller = new AbortController();
+            const metadata = await fetchMetadata(url, controller.signal);
+            if (isCancelled) {
+                console.log("saveEditedBookmark: cancelled during metadata fetch");
+                controller.abort();
+                return;
+            }
+            const receivedTitle = (metadata.title || '').trim();
+            const receivedIcon = (metadata.icon || '').trim();
+            const finalTitle = (title || receivedTitle).trim() || new URL(url).hostname;
+            const finalIcon = (icon || receivedIcon).trim();
+            console.log('saveEditedBookmark: after metadata fetch', { receivedTitle, receivedIcon, finalTitle, finalIcon });
+            title = finalTitle;
+            icon = finalIcon;
+            var usedFallbackTitle = missingTitleBefore && !receivedTitle;
+            var usedFallbackIcon = missingIconBefore && !receivedIcon;
+        } else {
+            var usedFallbackTitle = false;
+            var usedFallbackIcon = false;
+        }
+
+        if (isCancelled) {
+            console.log("saveEditedBookmark: cancelled before updating bookmark");
             return;
         }
-        title = title || metadata.title;
-        icon = icon || metadata.icon;
-    }
 
-    if (isCancelled) {
-        console.log("Save operation cancelled before updating bookmark");
+        const hadMissingTitle = usedFallbackTitle;
+        const hadMissingIcon = usedFallbackIcon;
+        const hadWhiteBg = iconPreview && iconPreview.classList.contains('white-bg');
+        bookmarks[groupName][index] = { url, title, icon: icon || faviconServiceUrlForDomain(getDomainFromUrl(url), 128), whiteBg: hadWhiteBg };
+        console.log('saveEditedBookmark: persisting');
+        saveBookmarks();
+        try {
+            renderBookmarks(groupName);
+        } catch (e) {
+            console.error('Failed to render bookmarks after edit; re-rendering groups', e);
+            renderBookmarkGroups();
+        }
+        console.log('saveEditedBookmark: saved', { groupName, index, titleUsed: title, iconUsed: icon || faviconServiceUrlForDomain(getDomainFromUrl(url), 128), whiteBg: hadWhiteBg });
+        if (hadMissingTitle || hadMissingIcon) {
+            backgroundRefreshBookmarkMetadata(groupName, index, url, hadMissingTitle, hadMissingIcon);
+        }
+        console.log("Edited bookmark saved successfully");
+    } finally {
+        console.log('saveEditedBookmark: closing modal and restoring content');
         resetModal();
-        return;
+        closeModal();
+        restoreModalContent();
     }
-
-    bookmarks[groupName][index] = { url, title, icon, whiteBg: iconPreview && iconPreview.classList.contains('white-bg') };
-    saveBookmarks();
-    renderBookmarks(groupName);
-    resetModal();
-    closeModal();
-    console.log("Edited bookmark saved successfully");
     }
 
     // Cancel the modal

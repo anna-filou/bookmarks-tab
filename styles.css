@@ -258,6 +258,14 @@ body {
     color: #fff;
 }
 
+.modal-saving {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 24px 0;
+}
+
 #modalContent label {
     font-size: 14px;
 }
